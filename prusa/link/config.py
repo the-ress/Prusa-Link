@@ -301,7 +301,8 @@ class Settings(Get):
         self.service_local = Model(
             self.get_section('service::local',
                              (('enable', int, 1), ('username', str, ''),
-                              ('digest', str, ''), ('api_key', str, ''))))
+                              ('digest', str, ''), ('api_key', str, ''),
+                              ('auth', bool, True))))
 
         Settings.instance = self
 
@@ -329,10 +330,13 @@ class Settings(Get):
         """
         Is there a reason for the wizard to be shown?
         """
-        interested_in = [
-            self.service_local["username"],
-            self.service_local["digest"],
-        ]
+        interested_in = []
+
+        if self.service_local["auth"]:
+            interested_in.extend([
+                self.service_local["username"],
+                self.service_local["digest"],
+            ])
         if not camera_mode:
             interested_in.append(self.printer["type"])
         return not all(interested_in)
