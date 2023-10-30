@@ -53,6 +53,7 @@ from .command_handlers import (
     JobInfo,
     LoadFilament,
     PausePrint,
+    RePrint,
     ResetPrinter,
     ResumePrint,
     SetReady,
@@ -81,6 +82,7 @@ from .structures.regular_expressions import (
     MBL_TRIGGER_REGEX,
     PAUSE_PRINT_REGEX,
     PRINTER_BOOT_REGEX,
+    REPRINT_REGEX,
     RESUME_PRINT_REGEX,
     TM_ERROR_LOG_REGEX,
 )
@@ -181,6 +183,8 @@ class PrusaLink:
             PAUSE_PRINT_REGEX, lambda sender, match: self.fw_pause_print())
         self.serial_parser.add_decoupled_handler(
             RESUME_PRINT_REGEX, lambda sender, match: self.fw_resume_print())
+        self.serial_parser.add_decoupled_handler(
+            REPRINT_REGEX, lambda sender, match: self.fw_reprint())
 
         # Init components first, so they all exist for signal binding stuff
         # TODO: does not need printer, the transfer object should be
@@ -342,6 +346,8 @@ class PrusaLink:
                 result: Any = ""
                 if command == "pause":
                     result = self.command_queue.do_command(PausePrint())
+                elif command == "reprint":
+                    result = self.command_queue.do_command(RePrint())
                 elif command == "resume":
                     result = self.command_queue.do_command(ResumePrint())
                 elif command == "stop":
@@ -564,6 +570,12 @@ class PrusaLink:
         """
         prctl_name()
         command = ResumePrint(source=Source.USER)
+        self.command_queue.enqueue_command(command)
+
+    def fw_reprint(self) -> None:
+        """Prints the last job again, activated from the printer LCD screen"""
+        prctl_name()
+        command = RePrint(source=Source.USER)
         self.command_queue.enqueue_command(command)
 
     # --- Signal handlers ---
