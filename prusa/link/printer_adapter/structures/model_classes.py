@@ -78,6 +78,7 @@ class Telemetry(BaseModel):
         return data
 
 
+
 class NetworkInfo(BaseModel):
     """The Network Info model"""
 
