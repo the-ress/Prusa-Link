@@ -11,7 +11,7 @@ from re import Match
 from subprocess import STDOUT, CalledProcessError, check_call, check_output
 from sys import executable
 from threading import Event
-from time import time
+from time import monotonic, time
 from typing import Dict, Optional, Set
 
 from prusa.connect.printer.const import Event as EventConst
@@ -33,6 +33,8 @@ from .structures.regular_expressions import (
     OPEN_RESULT_REGEX,
     PRINTER_BOOT_REGEX,
     REJECTION_REGEX,
+    RESET_ACTIVATED_REGEX,
+    RESET_DEACTIVATED_REGEX,
 )
 
 log = logging.getLogger(__name__)
@@ -51,6 +53,52 @@ def update_prusalink():
         [executable, '-m', 'pip', 'install', '-U',
          '--upgrade-strategy', 'only-if-needed', 'prusalink'],
         stderr=STDOUT).decode()
+
+
+def change_reset_mode(model, serial_adapter, serial_parser, quit_evt,
+                      timeout=1, enable=True):
+    """Used for enabling or disabling the reset signal propagation of the
+    printer USB interface chip. DTR -> reset line"""
+    # pylint: disable=too-many-arguments
+    # The reset disabling is off - ignore the command
+    if not model.serial_adapter.reset_disabling:
+        return
+    # Already set to the target state, return early
+    if model.serial_adapter.resets_enabled == enable:
+        return
+
+    # Cannot disable resets from the gpio pins, give up early
+    using_port = model.serial_adapter.using_port
+    if using_port is None or using_port.is_rpi_port:
+        return
+
+    times_out_at = monotonic() + timeout
+    event = Event()
+
+    def waiter(sender, match):
+        """Stops the wait for printer boot"""
+        assert sender is not None
+        assert match is not None
+        event.set()
+
+    confirm_regex = (RESET_ACTIVATED_REGEX if enable
+                     else RESET_DEACTIVATED_REGEX)
+    serial_parser.add_decoupled_handler(
+        confirm_regex, waiter)
+
+    if enable:
+        serial_adapter.enable_dtr_resets()
+    else:
+        serial_adapter.disable_dtr_resets()
+
+    while not quit_evt.is_set() and monotonic() < times_out_at:
+        if event.wait(QUIT_INTERVAL):
+            break
+
+    serial_parser.remove_handler(confirm_regex, waiter)
+
+    if time() > times_out_at:
+        raise CommandFailed("Failed disabling USB DTR resets")
 
 
 class TryUntilState(Command):
@@ -108,7 +156,9 @@ class TryUntilState(Command):
         if self.model.state_manager.current_state in desired_states:
             self.right_state.set()
 
-        while self.running and time() < wait_until and not succeeded:
+        while (not self.quit_evt.is_set()
+               and time() < wait_until
+               and not succeeded):
             succeeded = self.right_state.wait(QUIT_INTERVAL)
 
         self.state_manager.state_changed_signal.disconnect(state_changed)
@@ -449,9 +499,18 @@ class ResetPrinter(Command):
             StateChange(default_source=self.source,
                         command_id=self.command_id))
 
+        # Make sure the USB DTR resets are on
+        try:
+            change_reset_mode(self.model, self.serial_adapter,
+                              self.serial_parser, self.quit_evt,
+                              timeout=self.timeout, enable=True)
+        except CommandFailed:
+            # If we fail for whatever reason, try and reset the printer anyways
+            pass
+
         self.serial_adapter.reset_client()
 
-        while self.running and time() < times_out_at:
+        while not self.quit_evt.is_set() and time() < times_out_at:
             if event.wait(QUIT_INTERVAL):
                 break
 
@@ -555,3 +614,25 @@ class CancelReady(Command):
                         default_source=self.source))
         self.state_manager.idle()
         self.state_manager.stop_expecting_change()
+
+
+class DisableResets(Command):
+    """Class for disabling printer USB DTR resets"""
+    command_name = "disable_resets"
+    timeout = 1
+
+    def _run_command(self):
+        """Disables resets"""
+        change_reset_mode(self.model, self.serial_adapter, self.serial_parser,
+                          self.quit_evt, timeout=self.timeout, enable=False)
+
+
+class EnableResets(Command):
+    """Class for enabling printer USB DTR resets"""
+    command_name = "enable_resets"
+    timeout = 1
+
+    def _run_command(self):
+        """Enables resets"""
+        change_reset_mode(self.model, self.serial_adapter, self.serial_parser,
+                          self.quit_evt, timeout=self.timeout, enable=True)

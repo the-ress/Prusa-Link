@@ -151,3 +151,6 @@ URLS_FOR_WIZARD = re.compile(r"/(\d{1,3})?/?")
 TM_CAL_START_REGEX = re.compile(r"^TM: calibration start$")
 TM_CAL_END_REGEX = re.compile(r"^(TM: calibr\. failed!)|"
                               r"(Thermal Model settings:)$")
+
+RESET_ACTIVATED_REGEX = re.compile(r".*Reset mode activated.*")
+RESET_DEACTIVATED_REGEX = re.compile(r".*Reset mode deactivated.*")
